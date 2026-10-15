@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { endSession, startSession, getCurrentUser } from "@/lib/session";
 import { q, str } from "@/lib/format";
 import { audit } from "@/lib/audit";
+import { ensureSchema } from "@/lib/schema-bootstrap";
 import { adminIds, appUrl, notify, sendDirectEmail } from "@/lib/notify";
 
 function back(path: string, params: Record<string, string>): never {
@@ -132,6 +133,7 @@ export async function changePassword(fd: FormData) {
 
 export async function platformLogin(fd: FormData) {
   const email = str(fd, "email").toLowerCase();
+  await ensureSchema();
   // First run on a fresh database (e.g. Hostinger without shell access): create the owner from env.
   const envEmail = process.env.PLATFORM_ADMIN_EMAIL?.toLowerCase();
   const envPw = process.env.PLATFORM_ADMIN_PASSWORD;

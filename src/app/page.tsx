@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 
 export default async function Home() {
-  const s = await getSession();
+  // The landing page must render even if config is broken, so /api/health can be reached from it.
+  const s = await getSession().catch(() => null);
   if (s?.kind === "user") redirect("/app");
   if (s?.kind === "platform") redirect("/platform");
   const app = process.env.APP_NAME || "LoanOS";

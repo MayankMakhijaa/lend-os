@@ -2,7 +2,9 @@
 // Every tenant-owned row carries tenantId; all queries are scoped by it (see src/lib/access.ts).
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // Build and runtime machines can differ on shared hosting (e.g. Hostinger), so bundle the common Linux engines.
+  binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x", "rhel-openssl-1.0.x", "rhel-openssl-1.1.x", "rhel-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
