@@ -1,0 +1,326 @@
+// LoanOS — multi-tenant loan proposal platform.
+// Every tenant-owned row carries tenantId; all queries are scoped by it (see src/lib/access.ts).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite" // switch to "postgresql" for production
+  url      = env("DATABASE_URL")
+}
+
+model PlatformAdmin {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+model Tenant {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  brandColor  String   @default("#1e40af")
+  supportEmail String?
+  active      Boolean  @default(true)
+  allowDsaSignup Boolean @default(true)
+  createdAt   DateTime @default(now())
+
+  users         User[]
+  lenders       Lender[]
+  products      Product[]
+  checklist     ChecklistItem[]
+  tatSettings   TatSetting[]
+  proposals     Proposal[]
+  auditLogs     AuditLog[]
+  notifications Notification[]
+}
+
+model User {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email              String
+  name               String
+  phone              String?
+  role               String // ADMIN | RM | DSA | LENDER
+  status             String    @default("ACTIVE") // PENDING | ACTIVE | DISABLED
+  passwordHash       String?
+  mustChangePassword Boolean   @default(false)
+  companyName        String? // DSA firm name
+  lenderId           String?
+  lender             Lender?   @relation(fields: [lenderId], references: [id])
+  inviteToken        String?   @unique
+  otpHash            String?
+  otpExpires         DateTime?
+  createdById        String?
+  lastLoginAt        DateTime?
+  createdAt          DateTime  @default(now())
+
+  dsaProposals  Proposal[]     @relation("DsaProposals")
+  rmProposals   Proposal[]     @relation("RmProposals")
+  notifications Notification[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId, role])
+}
+
+model Lender {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  type         String   @default("Bank") // Bank | NBFC | Other
+  contactEmail String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  users       User[]
+  products    LenderProduct[]
+  assignments LenderAssignment[]
+  checklist   ChecklistItem[]
+
+  @@unique([tenantId, name])
+}
+
+model Product {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code      String
+  name      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  lenders   LenderProduct[]
+  checklist ChecklistItem[]
+  proposals Proposal[]
+
+  @@unique([tenantId, code])
+}
+
+// Lender panel: which lenders are offered for which product
+model LenderProduct {
+  lenderId  String
+  productId String
+  lender    Lender  @relation(fields: [lenderId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([lenderId, productId])
+}
+
+// Checklist template line. lenderId null = base checklist for the product; set = extra item that lender requires.
+model ChecklistItem {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  lenderId    String?
+  lender      Lender?  @relation(fields: [lenderId], references: [id], onDelete: Cascade)
+  category    String
+  title       String
+  description String?
+  mandatory   Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, productId])
+}
+
+model TatSetting {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  key      String
+  label    String
+  days     Int
+  sortOrder Int   @default(0)
+
+  @@unique([tenantId, key])
+}
+
+model Proposal {
+  id              String    @id @default(cuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  refNo           String
+  dsaId           String
+  dsa             User      @relation("DsaProposals", fields: [dsaId], references: [id])
+  rmId            String?
+  rm              User?     @relation("RmProposals", fields: [rmId], references: [id])
+  productId       String
+  product         Product   @relation(fields: [productId], references: [id])
+
+  companyName     String
+  constitution    String? // Proprietorship | Partnership | LLP | Pvt Ltd | Public Ltd
+  pan             String?
+  gstin           String?
+  contactName     String?
+  contactPhone    String?
+  contactEmail    String?
+  city            String?
+  loanAmount      Float?
+  turnover        Float?
+  purpose         String?
+  notes           String?
+
+  status          String    @default("DRAFT")
+  statusChangedAt DateTime  @default(now())
+  submittedAt     DateTime?
+  feasibilityRemark String?
+  ipaRemark       String?
+  ipaAt           DateTime?
+  disbursedAt     DateTime?
+  disbursedAmount Float?
+  disbursedLenderId String?
+  payoutAmount    Float?
+  payoutRef       String?
+  payoutAt        DateTime?
+  closedReason    String?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  documents    ProposalDocument[]
+  queries      Query[]
+  pdCalls      PdCall[]
+  assignments  LenderAssignment[]
+  statusEvents StatusEvent[]
+  auditLogs    AuditLog[]
+
+  @@unique([tenantId, refNo])
+  @@index([tenantId, status])
+  @@index([tenantId, dsaId])
+  @@index([tenantId, rmId])
+}
+
+model StatusEvent {
+  id         String   @id @default(cuid())
+  proposalId String
+  proposal   Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  status     String
+  at         DateTime @default(now())
+}
+
+model ProposalDocument {
+  id              String   @id @default(cuid())
+  tenantId        String
+  proposalId      String
+  proposal        Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  checklistItemId String?
+  lenderId        String? // set when the line came from a lender-specific checklist
+  category        String
+  title           String
+  description     String?
+  mandatory       Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  status          String   @default("PENDING") // PENDING | UPLOADED | QUERY | REUPLOADED | VERIFIED
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  versions DocumentVersion[]
+  queries  Query[]
+}
+
+model DocumentVersion {
+  id           String           @id @default(cuid())
+  documentId   String
+  document     ProposalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  version      Int
+  fileName     String
+  storedName   String
+  mimeType     String
+  size         Int
+  uploadedById String
+  uploadedByName String
+  createdAt    DateTime         @default(now())
+}
+
+model Query {
+  id            String            @id @default(cuid())
+  tenantId      String
+  proposalId    String
+  proposal      Proposal          @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  documentId    String?
+  document      ProposalDocument? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  lenderId      String? // set when raised by a lender
+  raisedById    String
+  raisedByName  String
+  raisedByRole  String
+  message       String
+  status        String            @default("OPEN") // OPEN | RESPONDED | CLOSED
+  response      String?
+  respondedById String?
+  respondedByName String?
+  respondedAt   DateTime?
+  closedAt      DateTime?
+  createdAt     DateTime          @default(now())
+}
+
+model PdCall {
+  id           String    @id @default(cuid())
+  proposalId   String
+  proposal     Proposal  @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  scheduledAt  DateTime
+  completedAt  DateTime?
+  attendees    String?
+  notes        String?
+  loggedById   String
+  loggedByName String
+  createdAt    DateTime  @default(now())
+}
+
+model LenderAssignment {
+  id            String   @id @default(cuid())
+  tenantId      String
+  proposalId    String
+  proposal      Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  lenderId      String
+  lender        Lender   @relation(fields: [lenderId], references: [id])
+  status        String   @default("SENT")
+  sanctionAmount Float?
+  sanctionRoi   String?
+  sanctionVersionId String? // DocumentVersion holding the sanction letter
+  remarks       String?
+  sentAt        DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([proposalId, lenderId])
+}
+
+model AuditLog {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  proposalId String?
+  proposal   Proposal? @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  actorId    String?
+  actorName  String
+  actorRole  String
+  action     String
+  detail     String?
+  createdAt  DateTime  @default(now())
+
+  @@index([tenantId, createdAt])
+}
+
+model Notification {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  proposalId String?
+  subject    String
+  body       String
+  emailStatus    String @default("SKIPPED") // SENT | LOGGED | FAILED | SKIPPED
+  whatsappStatus String @default("SKIPPED")
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
