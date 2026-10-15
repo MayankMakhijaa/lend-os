@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite" // switch to "postgresql" for production
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -120,9 +120,9 @@ model ChecklistItem {
   product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   lenderId    String?
   lender      Lender?  @relation(fields: [lenderId], references: [id], onDelete: Cascade)
-  category    String
-  title       String
-  description String?
+  category    String @db.VarChar(255)
+  title       String @db.VarChar(500)
+  description String? @db.Text
   mandatory   Boolean  @default(true)
   sortOrder   Int      @default(0)
   active      Boolean  @default(true)
@@ -165,14 +165,14 @@ model Proposal {
   city            String?
   loanAmount      Float?
   turnover        Float?
-  purpose         String?
-  notes           String?
+  purpose         String? @db.Text
+  notes           String? @db.Text
 
   status          String    @default("DRAFT")
   statusChangedAt DateTime  @default(now())
   submittedAt     DateTime?
-  feasibilityRemark String?
-  ipaRemark       String?
+  feasibilityRemark String? @db.Text
+  ipaRemark       String? @db.Text
   ipaAt           DateTime?
   disbursedAt     DateTime?
   disbursedAmount Float?
@@ -180,7 +180,7 @@ model Proposal {
   payoutAmount    Float?
   payoutRef       String?
   payoutAt        DateTime?
-  closedReason    String?
+  closedReason    String? @db.Text
 
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -213,9 +213,9 @@ model ProposalDocument {
   proposal        Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
   checklistItemId String?
   lenderId        String? // set when the line came from a lender-specific checklist
-  category        String
-  title           String
-  description     String?
+  category        String @db.VarChar(255)
+  title           String @db.VarChar(500)
+  description     String? @db.Text
   mandatory       Boolean  @default(true)
   sortOrder       Int      @default(0)
   status          String   @default("PENDING") // PENDING | UPLOADED | QUERY | REUPLOADED | VERIFIED
@@ -231,9 +231,9 @@ model DocumentVersion {
   documentId   String
   document     ProposalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
   version      Int
-  fileName     String
+  fileName     String @db.VarChar(512)
   storedName   String
-  mimeType     String
+  mimeType     String @db.VarChar(255)
   size         Int
   uploadedById String
   uploadedByName String
@@ -251,9 +251,9 @@ model Query {
   raisedById    String
   raisedByName  String
   raisedByRole  String
-  message       String
+  message       String @db.Text
   status        String            @default("OPEN") // OPEN | RESPONDED | CLOSED
-  response      String?
+  response      String? @db.Text
   respondedById String?
   respondedByName String?
   respondedAt   DateTime?
@@ -267,8 +267,8 @@ model PdCall {
   proposal     Proposal  @relation(fields: [proposalId], references: [id], onDelete: Cascade)
   scheduledAt  DateTime
   completedAt  DateTime?
-  attendees    String?
-  notes        String?
+  attendees    String? @db.Text
+  notes        String? @db.Text
   loggedById   String
   loggedByName String
   createdAt    DateTime  @default(now())
@@ -285,7 +285,7 @@ model LenderAssignment {
   sanctionAmount Float?
   sanctionRoi   String?
   sanctionVersionId String? // DocumentVersion holding the sanction letter
-  remarks       String?
+  remarks       String? @db.Text
   sentAt        DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -302,7 +302,7 @@ model AuditLog {
   actorName  String
   actorRole  String
   action     String
-  detail     String?
+  detail     String? @db.Text
   createdAt  DateTime  @default(now())
 
   @@index([tenantId, createdAt])
@@ -315,8 +315,8 @@ model Notification {
   userId     String
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   proposalId String?
-  subject    String
-  body       String
+  subject    String @db.VarChar(500)
+  body       String @db.Text
   emailStatus    String @default("SKIPPED") // SENT | LOGGED | FAILED | SKIPPED
   whatsappStatus String @default("SKIPPED")
   readAt     DateTime?

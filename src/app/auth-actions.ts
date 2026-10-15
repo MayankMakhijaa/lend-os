@@ -132,6 +132,12 @@ export async function changePassword(fd: FormData) {
 
 export async function platformLogin(fd: FormData) {
   const email = str(fd, "email").toLowerCase();
+  // First run on a fresh database (e.g. Hostinger without shell access): create the owner from env.
+  const envEmail = process.env.PLATFORM_ADMIN_EMAIL?.toLowerCase();
+  const envPw = process.env.PLATFORM_ADMIN_PASSWORD;
+  if (envEmail && envPw && envPw.length >= 8 && (await db.platformAdmin.count()) === 0) {
+    await db.platformAdmin.create({ data: { email: envEmail, name: "Platform Owner", passwordHash: await bcrypt.hash(envPw, 10) } });
+  }
   const a = await db.platformAdmin.findUnique({ where: { email } });
   if (!a || !(await bcrypt.compare(str(fd, "password"), a.passwordHash))) redirect("/platform/login?err=Invalid+credentials.");
   await startSession({ sub: a.id, kind: "platform" });

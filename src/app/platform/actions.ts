@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { requirePlatformAdmin, endSession } from "@/lib/session";
 import { provisionTenant } from "@/lib/provision";
 import { str } from "@/lib/format";
+import { seedDemo } from "@/lib/demo";
 
 export async function createTenant(fd: FormData) {
   await requirePlatformAdmin();
@@ -33,4 +34,12 @@ export async function toggleTenant(fd: FormData) {
 export async function platformLogout() {
   await endSession();
   redirect("/platform/login");
+}
+
+/** One-click demo workspace (workspace code "provik", password Demo@1234) for sales demos. */
+export async function createDemoWorkspace() {
+  await requirePlatformAdmin();
+  if (await db.tenant.findUnique({ where: { slug: "provik" } })) redirect("/platform?err=The+demo+workspace+%22provik%22+already+exists.");
+  await seedDemo(db);
+  redirect("/platform?msg=Demo+workspace+%22provik%22+created.+All+demo+users+use+password+Demo%401234.");
 }

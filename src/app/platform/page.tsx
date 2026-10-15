@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { requirePlatformAdmin } from "@/lib/session";
 import { Field, Flash, PageHeader } from "@/components/ui";
 import { fmtDate, fmtINR } from "@/lib/format";
-import { createTenant, platformLogout, toggleTenant } from "./actions";
+import { createDemoWorkspace, createTenant, platformLogout, toggleTenant } from "./actions";
 
 export default async function Platform({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
   const admin = await requirePlatformAdmin();
@@ -16,6 +16,9 @@ export default async function Platform({ searchParams }: { searchParams: Promise
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
       <PageHeader title="Platform console" sub={`Signed in as ${admin.email}. Each workspace is an isolated customer.`}>
+        {!tenants.some((t) => t.slug === "provik") && (
+          <form action={createDemoWorkspace}><button className="btn-secondary">Load demo workspace</button></form>
+        )}
         <form action={platformLogout}><button className="btn-secondary">Sign out</button></form>
       </PageHeader>
       <Flash sp={sp} />

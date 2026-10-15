@@ -3,14 +3,20 @@
 Multi-tenant loan proposal platform: DSA/Partner → RM → credit → multiple lenders → disbursement → DSA payout.
 Built from the Provik "Loan Proposal Platform" spec; each customer you sell to gets an isolated **workspace**.
 
-## Quick start
+**Deploying on Hostinger:** see [DEPLOY.md](DEPLOY.md).
+
+## Local development
+
+Needs Node 20+ and a MySQL 8 database (e.g. `docker run -e MYSQL_ROOT_PASSWORD=pw -e MYSQL_DATABASE=loanos -p 3306:3306 mysql:8`).
 
 ```bash
 npm install
-cp .env.example .env        # set SESSION_SECRET and FILE_ENCRYPTION_KEY (openssl rand -hex 32)
-npm run setup               # creates the database + demo data
+cp .env.example .env        # set DATABASE_URL, SESSION_SECRET and FILE_ENCRYPTION_KEY (openssl rand -hex 32)
+npm run setup               # creates the tables + demo data
 npm run dev                 # http://localhost:3000
 ```
+
+Without shell access (e.g. Hostinger), you don't need the seed: sign in at `/platform/login` with `PLATFORM_ADMIN_EMAIL`/`PASSWORD`, and click **Load demo workspace**.
 
 | Login | Where | Credentials |
 |---|---|---|
@@ -38,6 +44,6 @@ npm run dev                 # http://localhost:3000
 
 ## Production notes
 
-- Switch `provider` in `prisma/schema.prisma` to `postgresql` and set `DATABASE_URL`.
-- Replace `src/lib/storage.ts` with S3/GCS if you deploy on serverless hosting (local disk is used now).
+- MySQL is the database (Prisma migrations in `prisma/migrations`, applied by `npm start`).
+- Uploaded documents go to `UPLOAD_DIR` on disk; keep it outside the app folder and back it up. Swap `src/lib/storage.ts` for S3 if you move to serverless hosting.
 - Set `APP_URL` so links in emails are correct; set `SMTP_*` and `WHATSAPP_*` to turn on real delivery.
