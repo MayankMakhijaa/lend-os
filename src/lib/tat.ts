@@ -1,10 +1,10 @@
 // Maps the status a proposal is waiting in to the configurable TAT that governs it.
 export const STATUS_TAT_KEY: Record<string, string> = {
   SUBMITTED: "assign_rm",
-  RM_ASSIGNED: "feasibility",
-  FEASIBLE: "docs_upload",
+  RM_ASSIGNED: "docs_upload",
   DOCS_PENDING: "docs_upload",
-  DOCS_COMPLETE: "credit_queries",
+  DOCS_COMPLETE: "feasibility",
+  FEASIBLE: "credit_queries",
   QUERY_RAISED: "query_pd",
   QUERY_RESOLVED: "query_pd",
   PD_SCHEDULED: "query_pd",
@@ -26,11 +26,12 @@ export function tatDue(startedAt: Date, days: number): Date {
 export type TatInfo = { key: string; label: string; days: number; due: Date; breached: boolean; hoursLeft: number };
 
 export function tatFor(
-  p: { status: string; statusChangedAt: Date },
+  p: { status: string; statusChangedAt: Date; feasibleAt?: Date | null },
   settings: { key: string; label: string; days: number }[],
   now = new Date(),
 ): TatInfo | null {
-  const key = STATUS_TAT_KEY[p.status];
+  // Documents complete on a case that is already feasible means it is waiting on credit queries, not feasibility.
+  const key = p.status === "DOCS_COMPLETE" && p.feasibleAt ? "credit_queries" : STATUS_TAT_KEY[p.status];
   const s = key && settings.find((x) => x.key === key);
   if (!s) return null;
   const due = tatDue(p.statusChangedAt, s.days);

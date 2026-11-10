@@ -23,7 +23,7 @@ export default async function Reports({ searchParams }: { searchParams: Promise<
   ]);
   const now = new Date();
   const reached = (s: string) => proposals.filter((p) => p.statusEvents.some((e) => e.status === s)).length;
-  const funnel = [STATUS.SUBMITTED, STATUS.RM_ASSIGNED, STATUS.FEASIBLE, STATUS.DOCS_COMPLETE, STATUS.IPA_DONE, STATUS.SENT_TO_LENDERS, STATUS.SANCTIONED, STATUS.DISBURSED, STATUS.PAYOUT_RELEASED];
+  const funnel = [STATUS.SUBMITTED, STATUS.RM_ASSIGNED, STATUS.DOCS_COMPLETE, STATUS.FEASIBLE, STATUS.IPA_DONE, STATUS.SENT_TO_LENDERS, STATUS.SANCTIONED, STATUS.DISBURSED, STATUS.PAYOUT_RELEASED];
   const submitted = reached(STATUS.SUBMITTED);
 
   // Historical TAT performance: time spent in each status vs the configured target.

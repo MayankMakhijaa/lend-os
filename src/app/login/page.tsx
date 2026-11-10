@@ -13,8 +13,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         <Field label="Workspace code">
           <input name="workspace" className="input" defaultValue={sp.ws ?? ""} placeholder="e.g. provik" required />
         </Field>
-        <Field label="Email">
-          <input name="email" type="email" className="input" required autoComplete="username" />
+        <Field label="Email or User ID">
+          <input name="email" className="input" required autoComplete="username" />
         </Field>
         <Field label="Password">
           <input name="password" type="password" className="input" required autoComplete="current-password" />

@@ -7,7 +7,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireUser, type CurrentUser } from "@/lib/session";
 import { audit } from "@/lib/audit";
-import { appUrl, notify, sendDirectEmail } from "@/lib/notify";
+import { appUrl, sendDirectEmail } from "@/lib/notify";
 import { DEFAULT_CHECKLIST, ROLE_LABEL } from "@/lib/constants";
 import { num, str } from "@/lib/format";
 
@@ -19,11 +19,12 @@ function go(path: string, msg: string, key: "msg" | "err" = "msg"): never {
 
 // ---------- Users ----------
 
-/** Admin creates any login; RMs can onboard DSA/Partners. Blank password → invite link. */
+/** Admin creates Admin / RM / Lender logins. Blank password → invite link. Partners are onboarded at /app/partners. */
 export async function createUser(fd: FormData) {
-  const u = await requireUser(["ADMIN", "RM"]);
-  const role = u.role === "RM" ? "DSA" : str(fd, "role");
-  if (!["ADMIN", "RM", "DSA", "LENDER"].includes(role)) go("/app/users", "Choose a role.", "err");
+  const u = await requireUser(["ADMIN"]);
+  const role = str(fd, "role");
+  if (role === "DSA") redirect("/app/partners/new");
+  if (!["ADMIN", "RM", "LENDER"].includes(role)) go("/app/users", "Choose a role.", "err");
   const email = str(fd, "email").toLowerCase();
   const name = str(fd, "name");
   if (!name || !email.includes("@")) go("/app/users", "Name and a valid email are required.", "err");
@@ -44,7 +45,6 @@ export async function createUser(fd: FormData) {
       name,
       email,
       phone: str(fd, "phone") || null,
-      companyName: str(fd, "companyName") || null,
       lenderId,
       passwordHash: password ? await bcrypt.hash(password, 10) : null,
       mustChangePassword: !!password,
@@ -65,26 +65,24 @@ export async function createUser(fd: FormData) {
 
 async function loadManagedUser(u: CurrentUser, id: string) {
   const target = await db.user.findFirst({ where: { id, tenantId: u.tenantId } });
-  if (!target || (u.role === "RM" && target.role !== "DSA") || target.id === u.id) go("/app/users", "You can't manage that user.", "err");
+  if (!target || target.id === u.id) go("/app/users", "You can't manage that user.", "err");
+  // Partners have their own onboarding and approval flow.
+  if (target.role === "DSA") redirect(`/app/partners/${target.id}`);
   return target!;
 }
 
 export async function setUserStatus(fd: FormData) {
-  const u = await requireUser(["ADMIN", "RM"]);
+  const u = await requireUser(["ADMIN"]);
   const target = await loadManagedUser(u, str(fd, "userId"));
   const status = str(fd, "status");
   if (!["ACTIVE", "DISABLED"].includes(status)) go("/app/users", "Invalid status.", "err");
   await db.user.update({ where: { id: target.id }, data: { status } });
-  const approved = target.status === "PENDING" && status === "ACTIVE";
-  await audit(u.tenantId, actor(u), approved ? "DSA_APPROVED" : status === "ACTIVE" ? "USER_ENABLED" : target.status === "PENDING" ? "DSA_REJECTED" : "USER_DISABLED", target.email);
-  if (approved) {
-    await notify(u.tenantId, [target.id], "Your account is approved", `Your DSA/Partner account with ${u.tenant.name} is active. Sign in at ${appUrl(`/login?ws=${u.tenant.slug}`)}.`);
-  }
-  go("/app/users", approved ? `${target.name} approved.` : `${target.name} ${status === "ACTIVE" ? "enabled" : "disabled"}.`);
+  await audit(u.tenantId, actor(u), status === "ACTIVE" ? "USER_ENABLED" : "USER_DISABLED", target.email);
+  go("/app/users", `${target.name} ${status === "ACTIVE" ? "enabled" : "disabled"}.`);
 }
 
 export async function resetUserPassword(fd: FormData) {
-  const u = await requireUser(["ADMIN", "RM"]);
+  const u = await requireUser(["ADMIN"]);
   const target = await loadManagedUser(u, str(fd, "userId"));
   const inviteToken = crypto.randomBytes(24).toString("hex");
   await db.user.update({ where: { id: target.id }, data: { inviteToken } });
@@ -99,7 +97,7 @@ export async function updateUser(fd: FormData) {
   const target = await loadManagedUser(u, str(fd, "userId"));
   await db.user.update({
     where: { id: target.id },
-    data: { name: str(fd, "name") || target.name, phone: str(fd, "phone") || null, companyName: str(fd, "companyName") || null },
+    data: { name: str(fd, "name") || target.name, phone: str(fd, "phone") || null },
   });
   await audit(u.tenantId, actor(u), "USER_UPDATED", target.email);
   go("/app/users", "User updated.");
@@ -107,7 +105,14 @@ export async function updateUser(fd: FormData) {
 
 export async function updateProfile(fd: FormData) {
   const u = await requireUser();
-  await db.user.update({ where: { id: u.id }, data: { name: str(fd, "name") || u.name, phone: str(fd, "phone") || null, companyName: u.role === "DSA" ? str(fd, "companyName") || null : u.companyName } });
+  // Partners may update their contact and address details; PAN, GSTIN and constitution are KYC data that staff change.
+  const partner =
+    u.role === "DSA"
+      ? { companyName: str(fd, "companyName") || null, address: str(fd, "address") || u.address, city: str(fd, "city") || u.city, state: str(fd, "state") || u.state, pincode: str(fd, "pincode") || u.pincode }
+      : {};
+  if (u.role === "DSA" && str(fd, "pincode") && !/^[1-9][0-9]{5}$/.test(str(fd, "pincode"))) go("/app/account", "Enter a valid 6-digit PIN code.", "err");
+  await db.user.update({ where: { id: u.id }, data: { name: str(fd, "name") || u.name, phone: str(fd, "phone") || null, ...partner } });
+  if (u.role === "DSA") await audit(u.tenantId, actor(u), "PARTNER_UPDATED", `${u.email} · profile updated by the partner`);
   go("/app/account", "Profile updated.");
 }
 

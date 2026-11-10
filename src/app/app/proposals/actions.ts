@@ -8,9 +8,9 @@ import { getScopedProposal } from "@/lib/access";
 import { audit } from "@/lib/audit";
 import { adminIds, lenderUserIds, notify } from "@/lib/notify";
 import { saveFile, MAX_UPLOAD_BYTES } from "@/lib/storage";
-import { deriveFromLenders, recomputeDocs, recomputeQueries, setStatus } from "@/lib/workflow";
-import { LENDER_STATUS, LENDER_STATUS_LABEL, STATUS } from "@/lib/constants";
-import { fmtINR, num, str } from "@/lib/format";
+import { deriveFromLenders, recomputeDocs, recomputeQueries, setStatus, shareChecklist } from "@/lib/workflow";
+import { CLOSED_STATUSES, LENDER_STATUS, LENDER_STATUS_LABEL, STATUS, canEditProposal } from "@/lib/constants";
+import { fmtDate, fmtINR, num, str } from "@/lib/format";
 
 const actor = (u: CurrentUser) => ({ id: u.id, name: u.name, role: u.role });
 const page = (id: string) => `/app/proposals/${id}`;
@@ -94,6 +94,7 @@ async function submitInternal(u: CurrentUser, proposalId: string) {
   await notify(u.tenantId, await adminIds(u.tenantId), `New proposal ${p.refNo}`, `${p.companyName} was submitted and needs an RM assigned.`, p.id);
   if (p.rmId) {
     await setStatus(p.id, STATUS.RM_ASSIGNED, actor(u), "created by RM");
+    await shareChecklist(p.id);
   }
 }
 
@@ -109,6 +110,34 @@ export async function updateDraft(fd: FormData) {
   done(p.id, "Draft saved.");
 }
 
+const EDIT_LABELS: Record<string, string> = {
+  companyName: "Company", constitution: "Constitution", pan: "PAN", gstin: "GSTIN", contactName: "Contact", contactPhone: "Mobile",
+  contactEmail: "Email", city: "City", loanAmount: "Loan amount", turnover: "Turnover", purpose: "Purpose", notes: "Notes",
+};
+
+// ---- Corrections after submission ----
+export async function editProposal(fd: FormData) {
+  const { u, p } = await load(fd, ["DSA", "RM", "ADMIN"]);
+  if (!canEditProposal(u.role, p)) fail(p.id, "The proposal details can no longer be edited at this stage.");
+  const data = proposalFields(fd);
+  if (!data.companyName) fail(p.id, "Company name is required.");
+  const show = (k: string, v: unknown) => (v == null || v === "" ? "—" : k === "loanAmount" || k === "turnover" ? fmtINR(v as number) : String(v));
+  const changes = Object.keys(EDIT_LABELS)
+    .filter((k) => (p[k as keyof typeof data] ?? null) !== (data[k as keyof typeof data] ?? null))
+    .map((k) => (k === "notes" ? "Notes updated" : `${EDIT_LABELS[k]}: ${show(k, p[k as keyof typeof data])} → ${show(k, data[k as keyof typeof data])}`));
+  if (!changes.length) done(p.id, "No changes to save.");
+  await db.proposal.update({ where: { id: p.id }, data });
+  await audit(u.tenantId, actor(u), "PROPOSAL_EDITED", changes.join(" · "), p.id);
+  await notify(
+    u.tenantId,
+    (u.role === "DSA" ? [p.rmId, ...(p.rmId ? [] : await adminIds(u.tenantId))] : [p.dsaId, p.rmId]).filter((id) => id !== u.id),
+    `${p.refNo}: details updated`,
+    `${u.name} updated the proposal for ${data.companyName}:\n${changes.join("\n")}`,
+    p.id,
+  );
+  done(p.id, "Proposal details updated.");
+}
+
 // ---- Step 2: Admin assigns an RM ----
 export async function assignRm(fd: FormData) {
   const { u, p } = await load(fd, ["ADMIN"]);
@@ -117,46 +146,48 @@ export async function assignRm(fd: FormData) {
   if (!rm) fail(p.id, "Choose an active RM.");
   await db.proposal.update({ where: { id: p.id }, data: { rmId: rm.id } });
   await audit(u.tenantId, actor(u), "RM_ASSIGNED", rm.name, p.id);
-  if (p.status === STATUS.SUBMITTED) await setStatus(p.id, STATUS.RM_ASSIGNED, actor(u));
+  const first = p.status === STATUS.SUBMITTED;
+  if (first) await setStatus(p.id, STATUS.RM_ASSIGNED, actor(u));
   await notify(u.tenantId, [rm.id, p.dsaId], `${p.refNo}: RM assigned`, `${rm.name} is the relationship manager for ${p.companyName}.`, p.id);
-  done(p.id, `Assigned to ${rm.name}.`);
+  await shareChecklist(p.id); // step 3 follows straight away; no-op unless the case is waiting for its checklist
+  done(p.id, first ? `Assigned to ${rm.name}. Document checklist shared with the DSA.` : `Assigned to ${rm.name}.`);
 }
 
-// ---- Steps 3–4: feasibility, then the checklist goes to the DSA ----
+// ---- Step 3: the checklist goes to the DSA (automatic on RM assignment; this covers cases assigned earlier) ----
+export async function sendChecklist(fd: FormData) {
+  const { p } = await load(fd, ["RM", "ADMIN"]);
+  requireStatus(p, [STATUS.RM_ASSIGNED]);
+  await shareChecklist(p.id);
+  done(p.id, "Document checklist shared with the DSA.");
+}
+
+// ---- Step 4: feasibility, reviewed once the documents are received ----
 export async function decideFeasibility(fd: FormData) {
   const { u, p } = await load(fd, ["RM", "ADMIN"]);
-  requireStatus(p, [STATUS.RM_ASSIGNED]);
+  requireStatus(p, [STATUS.DOCS_COMPLETE]);
+  if (p.feasibleAt) fail(p.id, "Feasibility has already been decided for this case.");
   const remark = str(fd, "remark") || null;
-  await db.proposal.update({ where: { id: p.id }, data: { feasibilityRemark: remark } });
 
   if (str(fd, "decision") !== "feasible") {
-    await db.proposal.update({ where: { id: p.id }, data: { closedReason: remark ?? "Not feasible" } });
+    await db.proposal.update({ where: { id: p.id }, data: { feasibilityRemark: remark, closedReason: remark ?? "Not feasible" } });
     await setStatus(p.id, STATUS.NOT_FEASIBLE, actor(u), remark ?? undefined);
     await notify(u.tenantId, [p.dsaId], `${p.refNo}: not feasible`, `${p.companyName} was found not feasible.${remark ? ` Remark: ${remark}` : ""}`, p.id);
     done(p.id, "Case closed as not feasible.");
   }
 
-  const items = await db.checklistItem.findMany({
-    where: { tenantId: u.tenantId, productId: p.productId, lenderId: null, active: true },
-    orderBy: { sortOrder: "asc" },
-  });
-  await db.proposalDocument.createMany({
-    data: items.map((i) => ({
-      tenantId: u.tenantId,
-      proposalId: p.id,
-      checklistItemId: i.id,
-      category: i.category,
-      title: i.title,
-      description: i.description,
-      mandatory: i.mandatory,
-      sortOrder: i.sortOrder,
-    })),
-  });
+  await db.proposal.update({ where: { id: p.id }, data: { feasibilityRemark: remark, feasibleAt: new Date() } });
   await setStatus(p.id, STATUS.FEASIBLE, actor(u), remark ?? undefined);
-  await setStatus(p.id, STATUS.DOCS_PENDING, { id: null, name: "System", role: "SYSTEM" }, `checklist of ${items.length} documents shared`);
-  const list = items.map((i) => `• ${i.category}: ${i.title}${i.mandatory ? "" : " (if applicable)"}`).join("\n");
-  await notify(u.tenantId, [p.dsaId], `${p.refNo}: feasible, documents requested`, `${p.companyName} is feasible. Please upload:\n${list}`, p.id);
-  done(p.id, "Marked feasible and checklist shared with the DSA.");
+  await notify(u.tenantId, [p.dsaId], `${p.refNo}: feasible`, `${p.companyName} is feasible and moves to credit review.${remark ? ` Remark: ${remark}` : ""}`, p.id);
+  done(p.id, "Marked feasible.");
+}
+
+export async function editFeasibilityRemark(fd: FormData) {
+  const { u, p } = await load(fd, ["RM", "ADMIN"]);
+  if (!p.feasibleAt || CLOSED_STATUSES.includes(p.status as never)) fail(p.id, "That action isn't available at this stage.");
+  const remark = str(fd, "remark") || null;
+  await db.proposal.update({ where: { id: p.id }, data: { feasibilityRemark: remark } });
+  await audit(u.tenantId, actor(u), "FEASIBILITY_REMARK_EDITED", remark ?? "(cleared)", p.id);
+  done(p.id, "Feasibility remark updated.");
 }
 
 // ---- Steps 5 & 7: DSA uploads / re-uploads ----
@@ -238,7 +269,7 @@ export async function raiseQuery(fd: FormData) {
   if (doc) await db.proposalDocument.update({ where: { id: doc.id }, data: { status: "QUERY" } });
   await audit(u.tenantId, actor(u), "QUERY_RAISED", `${doc ? `[${doc.title}] ` : ""}${message}`, p.id);
 
-  const preIpa: string[] = [STATUS.DOCS_PENDING, STATUS.DOCS_COMPLETE, STATUS.QUERY_RESOLVED];
+  const preIpa: string[] = [STATUS.DOCS_PENDING, STATUS.DOCS_COMPLETE, STATUS.FEASIBLE, STATUS.QUERY_RESOLVED];
   if (!lenderId && preIpa.includes(p.status)) await setStatus(p.id, STATUS.QUERY_RAISED, actor(u));
   const who = lenderId ? `${u.lender?.name} (lender)` : u.name;
   await notify(
@@ -293,7 +324,8 @@ export async function closeQuery(fd: FormData) {
 // ---- Step 7: PD call ----
 export async function schedulePd(fd: FormData) {
   const { u, p } = await load(fd, ["RM", "ADMIN"]);
-  requireStatus(p, [STATUS.DOCS_COMPLETE, STATUS.QUERY_RAISED, STATUS.QUERY_RESOLVED, STATUS.PD_SCHEDULED]);
+  requireStatus(p, [STATUS.FEASIBLE, STATUS.DOCS_COMPLETE, STATUS.QUERY_RAISED, STATUS.QUERY_RESOLVED, STATUS.PD_SCHEDULED]);
+  if (!p.feasibleAt) fail(p.id, "Review feasibility before scheduling the PD call.");
   const at = new Date(str(fd, "scheduledAt"));
   if (isNaN(at.getTime())) fail(p.id, "Pick a date and time for the PD call.");
   await db.pdCall.create({
@@ -309,13 +341,34 @@ export async function completePd(fd: FormData) {
   const { u, p } = await load(fd, ["RM", "ADMIN"]);
   const call = await db.pdCall.findFirst({ where: { id: str(fd, "pdCallId"), proposalId: p.id } });
   if (!call) fail(p.id, "PD call not found.");
+  if (call.completedAt) fail(p.id, "That PD call is already completed.");
   const open = await db.query.count({ where: { proposalId: p.id, lenderId: null, status: "OPEN" } });
   if (open) fail(p.id, "Resolve open queries before completing the PD call.");
   await db.pdCall.update({ where: { id: call.id }, data: { completedAt: new Date(), notes: str(fd, "notes") || null } });
   await audit(u.tenantId, actor(u), "PD_COMPLETED", str(fd, "notes"), p.id);
-  if ([STATUS.PD_SCHEDULED, STATUS.QUERY_RESOLVED, STATUS.DOCS_COMPLETE].includes(p.status as never))
+  if (p.feasibleAt && [STATUS.PD_SCHEDULED, STATUS.QUERY_RESOLVED, STATUS.FEASIBLE, STATUS.DOCS_COMPLETE].includes(p.status as never))
     await setStatus(p.id, STATUS.PD_COMPLETED, actor(u));
   done(p.id, "PD call completed.");
+}
+
+/** Reschedule an upcoming PD call, or correct the notes of a completed one. */
+export async function editPdCall(fd: FormData) {
+  const { u, p } = await load(fd, ["RM", "ADMIN"]);
+  if (CLOSED_STATUSES.includes(p.status as never)) fail(p.id, "This case is closed.");
+  const call = await db.pdCall.findFirst({ where: { id: str(fd, "pdCallId"), proposalId: p.id } });
+  if (!call) fail(p.id, "PD call not found.");
+  if (call.completedAt) {
+    await db.pdCall.update({ where: { id: call.id }, data: { notes: str(fd, "notes") || null } });
+    await audit(u.tenantId, actor(u), "PD_NOTES_EDITED", str(fd, "notes"), p.id);
+    done(p.id, "PD call notes updated.");
+  }
+  const at = new Date(str(fd, "scheduledAt"));
+  if (isNaN(at.getTime())) fail(p.id, "Pick a date and time for the PD call.");
+  const moved = at.getTime() !== call.scheduledAt.getTime();
+  await db.pdCall.update({ where: { id: call.id }, data: { scheduledAt: at, attendees: str(fd, "attendees") || null } });
+  await audit(u.tenantId, actor(u), "PD_RESCHEDULED", `${fmtDate(call.scheduledAt, true)} → ${fmtDate(at, true)}`, p.id);
+  if (moved) await notify(u.tenantId, [p.dsaId], `${p.refNo}: PD call rescheduled`, `The PD call with ${p.companyName} is now on ${at.toLocaleString("en-IN")}.`, p.id);
+  done(p.id, "PD call updated.");
 }
 
 // ---- Step 8: credit assessment & in-principle approval ----
@@ -438,6 +491,20 @@ export async function logDisbursement(fd: FormData) {
   await setStatus(p.id, STATUS.DISBURSED, actor(u), `${fmtINR(amount)} by ${a.lender.name}`);
   await notify(u.tenantId, [p.rmId, p.dsaId], `${p.refNo}: disbursed`, `${fmtINR(amount)} was disbursed to ${p.companyName} by ${a.lender.name}.`, p.id);
   done(p.id, "Disbursement logged.");
+}
+
+/** Correct a logged disbursement (amount/date) before the payout is released. */
+export async function editDisbursement(fd: FormData) {
+  const { u, p } = await load(fd, ["RM", "ADMIN"]);
+  requireStatus(p, [STATUS.DISBURSED]);
+  const amount = num(fd, "amount");
+  if (!amount) fail(p.id, "Enter the disbursed amount.");
+  const date = str(fd, "date") ? new Date(str(fd, "date")) : p.disbursedAt ?? new Date();
+  if (isNaN(date.getTime())) fail(p.id, "Enter a valid disbursement date.");
+  await db.proposal.update({ where: { id: p.id }, data: { disbursedAmount: amount, disbursedAt: date } });
+  await audit(u.tenantId, actor(u), "DISBURSEMENT_EDITED", `${fmtINR(p.disbursedAmount)} on ${fmtDate(p.disbursedAt)} → ${fmtINR(amount)} on ${fmtDate(date)}`, p.id);
+  await notify(u.tenantId, [p.rmId, p.dsaId].filter((id) => id !== u.id), `${p.refNo}: disbursement corrected`, `The disbursement for ${p.companyName} was corrected to ${fmtINR(amount)} on ${fmtDate(date)}.`, p.id);
+  done(p.id, "Disbursement updated.");
 }
 
 // ---- Step 12: payout to DSA ----

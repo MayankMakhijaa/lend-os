@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { docVisibility, getScopedProposal, queryVisibility } from "@/lib/access";
-import { CLOSED_STATUSES, LENDER_STATUS, LENDER_STATUS_LABEL, ROLE_LABEL, STATUS, STATUS_LINE } from "@/lib/constants";
+import { CLOSED_STATUSES, LENDER_STATUS, LENDER_STATUS_LABEL, ROLE_LABEL, STATUS, STATUS_LINE, canEditProposal } from "@/lib/constants";
 import { fmtBytes, fmtDate, fmtINR } from "@/lib/format";
 import { tatFor } from "@/lib/tat";
 import { DocBadge, Empty, Field, Flash, LenderBadge, StatusBadge } from "@/components/ui";
@@ -51,6 +51,8 @@ export default async function ProposalPage({ params, searchParams }: { params: P
   const categories = [...new Set(p.documents.map((d) => d.category))];
   const docsDone = p.documents.filter((d) => d.status !== "PENDING").length;
   const openQueries = p.queries.filter((q) => q.status === "OPEN").length;
+  const canEdit = canEditProposal(u.role, p);
+  const localInput = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
   return (
     <div>
@@ -125,6 +127,42 @@ export default async function ProposalPage({ params, searchParams }: { params: P
                 {p.disbursedAmount != null && <div><dt className="text-xs text-slate-500">Disbursed</dt><dd className="font-medium">{fmtINR(p.disbursedAmount)} on {fmtDate(p.disbursedAt)}</dd></div>}
                 {p.payoutAmount != null && !isLender && <div><dt className="text-xs text-slate-500">DSA payout</dt><dd className="font-medium">{fmtINR(p.payoutAmount)} on {fmtDate(p.payoutAt)}{p.payoutRef ? ` · ${p.payoutRef}` : ""}</dd></div>}
               </dl>
+              {canEdit && (
+                <details className="border-t px-4 py-3">
+                  <summary className="cursor-pointer text-sm text-blue-700 hover:underline">Edit proposal details</summary>
+                  <form action={A.editProposal} className="mt-3 space-y-4">
+                    <Hidden id={p.id} />
+                    <ProposalFields p={p} />
+                    <div className="flex items-center gap-3">
+                      <button className="btn-primary">Save changes</button>
+                      <span className="text-xs text-slate-500">
+                        {isDsa ? "You can correct these details until feasibility is decided." : "Editable until the case is sent to lenders. Changes are logged and the DSA is notified."}
+                      </span>
+                    </div>
+                  </form>
+                </details>
+              )}
+              {staff && p.feasibleAt && !closed && (
+                <details className="border-t px-4 py-3">
+                  <summary className="cursor-pointer text-sm text-blue-700 hover:underline">Edit feasibility remark</summary>
+                  <form action={A.editFeasibilityRemark} className="mt-3 flex gap-2">
+                    <Hidden id={p.id} />
+                    <input name="remark" defaultValue={p.feasibilityRemark ?? ""} className="input" placeholder="Feasibility remark" />
+                    <button className="btn-secondary">Save</button>
+                  </form>
+                </details>
+              )}
+              {staff && p.status === STATUS.DISBURSED && (
+                <details className="border-t px-4 py-3">
+                  <summary className="cursor-pointer text-sm text-blue-700 hover:underline">Correct disbursement</summary>
+                  <form action={A.editDisbursement} className="mt-3 flex flex-wrap gap-2">
+                    <Hidden id={p.id} />
+                    <input name="amount" defaultValue={p.disbursedAmount ?? ""} className="input max-w-[200px]" inputMode="numeric" placeholder="Amount disbursed (₹)" required />
+                    <input type="date" name="date" defaultValue={p.disbursedAt ? localInput(p.disbursedAt).slice(0, 10) : ""} className="input max-w-[180px]" />
+                    <button className="btn-secondary">Save</button>
+                  </form>
+                </details>
+              )}
             </div>
           )}
 
@@ -320,6 +358,24 @@ export default async function ProposalPage({ params, searchParams }: { params: P
                         <button className="btn-success py-1 text-xs">Mark completed</button>
                       </form>
                     )}
+                    {staff && !closed && (
+                      <details className="mt-2 text-xs">
+                        <summary className="cursor-pointer text-blue-700 hover:underline">{c.completedAt ? "Edit notes" : "Reschedule / edit"}</summary>
+                        <form action={A.editPdCall} className="mt-2 flex flex-wrap gap-2">
+                          <Hidden id={p.id} />
+                          <input type="hidden" name="pdCallId" value={c.id} />
+                          {c.completedAt ? (
+                            <textarea name="notes" defaultValue={c.notes ?? ""} rows={2} className="input text-xs" placeholder="PD call notes / observations" />
+                          ) : (
+                            <>
+                              <input type="datetime-local" name="scheduledAt" defaultValue={localInput(c.scheduledAt)} className="input max-w-[220px] py-1 text-xs" required />
+                              <input name="attendees" defaultValue={c.attendees ?? ""} className="input max-w-[260px] py-1 text-xs" placeholder="Attendees" />
+                            </>
+                          )}
+                          <button className="btn-secondary py-1 text-xs">Save</button>
+                        </form>
+                      </details>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -367,19 +423,39 @@ export default async function ProposalPage({ params, searchParams }: { params: P
     }
     if (staff && p.status === STATUS.RM_ASSIGNED) {
       blocks.push(
+        <form key="checklist" action={A.sendChecklist} className="space-y-2">
+          <Hidden id={p.id} />
+          <div className="label">Share document checklist (step 3)</div>
+          <p className="text-xs text-slate-500">Sends the {p.product.code} checklist to the DSA. Feasibility is reviewed once the documents are received.</p>
+          <button className="btn-primary w-full">Share checklist with DSA</button>
+        </form>,
+      );
+    }
+    if (staff && !p.feasibleAt && ([STATUS.DOCS_PENDING, STATUS.QUERY_RAISED] as string[]).includes(p.status)) {
+      blocks.push(
+        <div key="feas-wait">
+          <div className="label">Feasibility check (step 4)</div>
+          <p className="text-sm text-slate-600">
+            Opens once the documents are received: {docsDone}/{p.documents.length} uploaded{openQueries ? `, ${openQueries} open quer${openQueries > 1 ? "ies" : "y"}` : ""}.
+          </p>
+        </div>,
+      );
+    }
+    if (staff && p.status === STATUS.DOCS_COMPLETE && !p.feasibleAt) {
+      blocks.push(
         <form key="feas" action={A.decideFeasibility} className="space-y-2">
           <Hidden id={p.id} />
-          <div className="label">Feasibility check (step 3)</div>
+          <div className="label">Feasibility check (step 4)</div>
+          <p className="text-xs text-slate-500">All mandatory documents are in. Review them, then record the decision.</p>
           <textarea name="remark" rows={2} className="input" placeholder="Remark (optional)" />
           <div className="flex gap-2">
             <button name="decision" value="feasible" className="btn-success flex-1">Feasible</button>
             <button name="decision" value="not" className="btn-danger flex-1">Not feasible</button>
           </div>
-          <p className="text-xs text-slate-500">Feasible shares the {p.product.code} document checklist with the DSA.</p>
         </form>,
       );
     }
-    if (staff && ([STATUS.DOCS_COMPLETE, STATUS.QUERY_RAISED, STATUS.QUERY_RESOLVED, STATUS.PD_SCHEDULED] as string[]).includes(p.status)) {
+    if (staff && p.feasibleAt && ([STATUS.FEASIBLE, STATUS.DOCS_COMPLETE, STATUS.QUERY_RAISED, STATUS.QUERY_RESOLVED, STATUS.PD_SCHEDULED] as string[]).includes(p.status)) {
       blocks.push(
         <form key="pd" action={A.schedulePd} className="space-y-2">
           <Hidden id={p.id} />
@@ -457,8 +533,9 @@ export default async function ProposalPage({ params, searchParams }: { params: P
     let hint: string | null = null;
     if (isDsa) {
       if (p.status === STATUS.SUBMITTED) hint = "Waiting for an RM to be assigned.";
-      else if (p.status === STATUS.RM_ASSIGNED) hint = "Your RM is checking feasibility.";
-      else if (p.status === STATUS.DOCS_PENDING) hint = "Upload the documents in the checklist. The RM is notified when all mandatory documents are in.";
+      else if (p.status === STATUS.RM_ASSIGNED) hint = "Your RM will share the document checklist shortly.";
+      else if (p.status === STATUS.DOCS_PENDING) hint = "Upload the documents in the checklist. Your RM reviews feasibility once all mandatory documents are in.";
+      else if (p.status === STATUS.DOCS_COMPLETE && !p.feasibleAt) hint = "Documents received. Your RM is reviewing feasibility.";
       else if (openQueries) hint = `You have ${openQueries} open quer${openQueries > 1 ? "ies" : "y"}. Reply or re-upload the document.`;
       else if (p.status === STATUS.SENT_TO_LENDERS) hint = "With lenders. You'll be notified as each lender updates.";
     }

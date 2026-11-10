@@ -27,7 +27,7 @@ export default async function Dashboard() {
           <Stat label="Open cases" value={open.length} href="/app/proposals?status=OPEN" />
           <Stat label="Unassigned" value={unassigned.length} href="/app/proposals?rmId=none" tone={unassigned.length ? "text-amber-600" : undefined} />
           <Stat label="TAT breached" value={breached.length} href="/app/proposals?tat=breached" tone={breached.length ? "text-red-600" : undefined} />
-          <Stat label="Pending DSA approvals" value={pendingDsa} href="/app/users?status=PENDING" tone={pendingDsa ? "text-amber-600" : undefined} />
+          <Stat label="Partner approvals" value={pendingDsa} href="/app/partners?status=PENDING" tone={pendingDsa ? "text-amber-600" : undefined} />
           <Stat label="Disbursed (all time)" value={fmtINR(sum(disbursed, (p) => p.disbursedAmount))} href="/app/reports" />
           <Stat label="Payouts due" value={payoutDue.length} href={`/app/proposals?status=${STATUS.DISBURSED}`} />
         </div>
@@ -40,7 +40,7 @@ export default async function Dashboard() {
   }
 
   if (u.role === "RM") {
-    const action = open.filter((p) => ([STATUS.RM_ASSIGNED, STATUS.DOCS_COMPLETE, STATUS.QUERY_RESOLVED, STATUS.PD_SCHEDULED, STATUS.PD_COMPLETED, STATUS.IPA_DONE, STATUS.SANCTIONED] as string[]).includes(p.status));
+    const action = open.filter((p) => ([STATUS.RM_ASSIGNED, STATUS.DOCS_COMPLETE, STATUS.FEASIBLE, STATUS.QUERY_RESOLVED, STATUS.PD_SCHEDULED, STATUS.PD_COMPLETED, STATUS.IPA_DONE, STATUS.SANCTIONED] as string[]).includes(p.status));
     const withLenders = open.filter((p) => p.status === STATUS.SENT_TO_LENDERS);
     return (
       <div>

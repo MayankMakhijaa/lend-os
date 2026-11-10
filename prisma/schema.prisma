@@ -48,7 +48,7 @@ model User {
   name               String
   phone              String?
   role               String // ADMIN | RM | DSA | LENDER
-  status             String    @default("ACTIVE") // PENDING | ACTIVE | DISABLED
+  status             String    @default("ACTIVE") // PENDING | ACTIVE | REJECTED | DISABLED
   passwordHash       String?
   mustChangePassword Boolean   @default(false)
   companyName        String? // DSA firm name
@@ -61,12 +61,50 @@ model User {
   lastLoginAt        DateTime?
   createdAt          DateTime  @default(now())
 
-  dsaProposals  Proposal[]     @relation("DsaProposals")
-  rmProposals   Proposal[]     @relation("RmProposals")
+  // Partner (DSA) onboarding. partnerCode is the unique User ID issued on approval; it also works as a login id.
+  partnerCode      String?
+  constitution     String?
+  pan              String?
+  gstin            String?
+  address          String?   @db.Text
+  city             String?
+  state            String?
+  pincode          String?
+  onboardingSource String? // SELF (registered at /signup) | STAFF (created by Admin/RM)
+  reviewRemark     String?   @db.Text
+  reviewedByName   String?
+  reviewedAt       DateTime?
+
+  dsaProposals  Proposal[]        @relation("DsaProposals")
+  rmProposals   Proposal[]        @relation("RmProposals")
   notifications Notification[]
+  partnerDocs   PartnerDocument[]
 
   @@unique([tenantId, email])
+  @@unique([tenantId, partnerCode])
   @@index([tenantId, role])
+}
+
+// Partner KYC files (Aadhaar, PAN, GST certificate, MOA & AOA, electricity bill). Every upload is kept;
+// the newest row per type is the current one.
+model PartnerDocument {
+  id             String    @id @default(cuid())
+  tenantId       String
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type           String // see PARTNER_DOCS in src/lib/constants.ts
+  fileName       String    @db.VarChar(512)
+  storedName     String
+  mimeType       String    @db.VarChar(255)
+  size           Int
+  status         String    @default("UPLOADED") // UPLOADED | VERIFIED
+  uploadedById   String?
+  uploadedByName String
+  verifiedByName String?
+  verifiedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([userId, type])
 }
 
 model Lender {
@@ -174,6 +212,7 @@ model Proposal {
   statusChangedAt DateTime  @default(now())
   submittedAt     DateTime?
   feasibilityRemark String? @db.Text
+  feasibleAt      DateTime? // set when the case is marked feasible (after documents are received)
   ipaRemark       String? @db.Text
   ipaAt           DateTime?
   disbursedAt     DateTime?

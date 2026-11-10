@@ -9,6 +9,8 @@ import { q, str } from "@/lib/format";
 import { audit } from "@/lib/audit";
 import { ensureSchema } from "@/lib/schema-bootstrap";
 import { adminIds, appUrl, notify, sendDirectEmail } from "@/lib/notify";
+import { partnerFields, partnerFiles, savePartnerDocs, validatePartner } from "@/lib/partners";
+import { requiredPartnerDocs } from "@/lib/constants";
 
 function back(path: string, params: Record<string, string>): never {
   redirect(path + q(params));
@@ -16,13 +18,18 @@ function back(path: string, params: Record<string, string>): never {
 
 export async function login(fd: FormData) {
   const ws = str(fd, "workspace").toLowerCase();
-  const email = str(fd, "email").toLowerCase();
+  // Partners may sign in with either their email or the User ID issued on approval.
+  const loginId = str(fd, "email");
   const password = str(fd, "password");
   const tenant = await db.tenant.findUnique({ where: { slug: ws } });
-  const user = tenant && tenant.active ? await db.user.findUnique({ where: { tenantId_email: { tenantId: tenant.id, email } } }) : null;
+  const user =
+    tenant && tenant.active && loginId
+      ? await db.user.findFirst({ where: { tenantId: tenant.id, OR: [{ email: loginId.toLowerCase() }, { partnerCode: loginId.toUpperCase() }] } })
+      : null;
   if (!user || !user.passwordHash || !(await bcrypt.compare(password, user.passwordHash)))
-    back("/login", { err: "Invalid workspace, email or password.", ws });
-  if (user!.status === "PENDING") back("/login", { err: "Your account is awaiting approval by the admin.", ws });
+    back("/login", { err: "Invalid workspace, email / User ID or password.", ws });
+  if (user!.status === "PENDING") back("/login", { err: "Your account is awaiting approval.", ws });
+  if (user!.status === "REJECTED") back("/login", { err: "Your application was not approved. Contact the admin.", ws });
   if (user!.status !== "ACTIVE") back("/login", { err: "Your account is disabled. Contact your admin.", ws });
   await db.user.update({ where: { id: user!.id }, data: { lastLoginAt: new Date() } });
   await startSession({ sub: user!.id, kind: "user", tid: user!.tenantId, role: user!.role });
@@ -84,38 +91,45 @@ export async function acceptInvite(fd: FormData) {
   back("/login", { ws: user.tenant.slug, msg: "Password set. Please sign in." });
 }
 
+/** Option 1: the partner registers, fills in their details and uploads their documents. Staff then approve or reject. */
 export async function signupDsa(fd: FormData) {
   const slug = str(fd, "slug").toLowerCase();
   const tenant = await db.tenant.findUnique({ where: { slug } });
   if (!tenant || !tenant.active || !tenant.allowDsaSignup) redirect("/login?err=Sign-up+is+not+available+for+this+workspace.");
+  const path = `/signup/${slug}`;
   const email = str(fd, "email").toLowerCase();
-  const password = str(fd, "password");
-  const name = str(fd, "name");
-  if (!name || !email.includes("@")) back(`/signup/${slug}`, { err: "Name and a valid email are required." });
-  if (password.length < 8) back(`/signup/${slug}`, { err: "Password must be at least 8 characters." });
-  const exists = await db.user.findUnique({ where: { tenantId_email: { tenantId: tenant.id, email } } });
-  if (exists) back(`/signup/${slug}`, { err: "An account with this email already exists." });
-  const u = await db.user.create({
-    data: {
-      tenantId: tenant.id,
-      role: "DSA",
-      status: "PENDING",
-      name,
-      email,
-      phone: str(fd, "phone") || null,
-      companyName: str(fd, "companyName") || null,
-      passwordHash: await bcrypt.hash(password, 10),
-    },
-  });
-  await audit(tenant.id, { id: u.id, name: u.name, role: "DSA" }, "DSA_SIGNUP", `${u.companyName ?? ""} awaiting approval`);
+  const fields = partnerFields(fd);
+  const problem = validatePartner(fields, email);
+  if (problem) back(path, { err: problem });
+  const { files, error } = partnerFiles(fd);
+  if (error) back(path, { err: error });
+  const missing = requiredPartnerDocs(fields.constitution).filter((d) => !files.some((f) => f.type === d.type));
+  if (missing.length) back(path, { err: `Please upload: ${missing.map((d) => d.label).join(", ")}.` });
+
+  // A rejected applicant may apply again with the same email; anything else with that email is a duplicate.
+  const existing = await db.user.findUnique({ where: { tenantId_email: { tenantId: tenant.id, email } } });
+  if (existing && !(existing.role === "DSA" && existing.status === "REJECTED"))
+    back(path, { err: existing.status === "PENDING" ? "An application with this email is already under review." : "An account with this email already exists. Please sign in." });
+  const data = { ...fields, status: "PENDING", onboardingSource: "SELF", reviewRemark: null, reviewedByName: null, reviewedAt: null };
+  const u = existing
+    ? await db.user.update({ where: { id: existing.id }, data })
+    : await db.user.create({ data: { ...data, tenantId: tenant.id, role: "DSA", email } });
+  await savePartnerDocs(tenant.id, u.id, files, { id: u.id, name: u.name });
+  const firm = u.companyName ?? "no firm name";
+  await audit(tenant.id, { id: u.id, name: u.name, role: "DSA" }, existing ? "PARTNER_REAPPLIED" : "PARTNER_REGISTERED", `${u.email} · ${firm} · ${files.length} documents`);
   const rms = await db.user.findMany({ where: { tenantId: tenant.id, role: "RM", status: "ACTIVE" }, select: { id: true } });
   await notify(
     tenant.id,
     [...(await adminIds(tenant.id)), ...rms.map((r) => r.id)],
-    "New DSA/Partner sign-up awaiting approval",
-    `${u.name} (${u.companyName ?? "no firm name"}, ${u.email}) registered as a DSA/Partner. Approve them at ${appUrl("/app/users?status=PENDING")}.`,
+    "New partner application awaiting approval",
+    `${u.name} (${firm}, ${u.email}) registered as a DSA/Partner and uploaded ${files.length} documents. Review and approve or reject: ${appUrl(`/app/partners/${u.id}`)}`,
   );
-  back("/login", { ws: slug, msg: "Thanks for registering. You can sign in once an admin approves your account." });
+  await sendDirectEmail(
+    u.email,
+    `${tenant.name}: application received`,
+    `Hi ${u.name},\n\nThank you for registering as a partner with ${tenant.name}. We have received your details and documents and will review them shortly.\n\nOnce your application is approved you will receive your User ID and password on this email.`,
+  );
+  back("/login", { ws: slug, msg: "Application submitted. You'll receive your User ID and password by email once it is approved." });
 }
 
 export async function changePassword(fd: FormData) {

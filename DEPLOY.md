@@ -54,7 +54,7 @@ The tables are created automatically the first time the app starts, because `npm
    - create a real workspace for each customer.
 6. Connect your domain and enable SSL in hPanel. **HTTPS is required**, because login cookies are marked secure in production.
 
-Redeploys from GitHub pick up new code. Database migrations run automatically on start.
+Redeploys from GitHub pick up new code. Database migrations run automatically on start (and, as a fallback, when the server boots if the host doesn't use `npm start`).
 
 ## Option B: Hostinger VPS (Ubuntu)
 

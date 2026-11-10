@@ -3,7 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { provisionTenant } from "./provision";
 import { saveFile } from "./storage";
-import { STATUS } from "./constants";
+import { STATUS, requiredPartnerDocs } from "./constants";
 
 const DEMO_PASSWORD = "Demo@1234";
 const day = 864e5;
@@ -42,9 +42,31 @@ export async function seedDemo(db: PrismaClient, slug = "provik") {
 
   const rm1 = await mk("RM", "Riya Sharma", "rm@provik.demo", { phone: "+919800000002" });
   const rm2 = await mk("RM", "Arjun Mehta", "rm2@provik.demo");
-  const dsa1 = await mk("DSA", "Vikram Kapoor", "dsa@provik.demo", { companyName: "Kapoor Finserv", phone: "+919800000003" });
-  const dsa2 = await mk("DSA", "Neha Shah", "dsa2@provik.demo", { companyName: "Shah Loan Associates" });
-  await mk("DSA", "Rohit Gupta", "dsa3@provik.demo", { companyName: "Gupta Capital Advisors", status: "PENDING" });
+  // Partners: two approved (one self-registered, one created by the RM) and one application waiting for review.
+  const approved = { reviewedByName: admin.name, reviewedAt: ago(30) };
+  const dsa1 = await mk("DSA", "Vikram Kapoor", "dsa@provik.demo", {
+    companyName: "Kapoor Finserv", phone: "+919800000003", partnerCode: "PROV-P0001", constitution: "Private Limited", pan: "AABCK1234F", gstin: "27AABCK1234F1Z5",
+    address: "402 Trade Centre, Bandra Kurla Complex", city: "Mumbai", state: "Maharashtra", pincode: "400051", onboardingSource: "SELF", ...approved,
+  });
+  const dsa2 = await mk("DSA", "Neha Shah", "dsa2@provik.demo", {
+    companyName: "Shah Loan Associates", phone: "+919800000004", partnerCode: "PROV-P0002", constitution: "Proprietorship", pan: "BNZPS5678K", gstin: "24BNZPS5678K1Z2",
+    address: "12 Ashram Road", city: "Ahmedabad", state: "Gujarat", pincode: "380009", onboardingSource: "STAFF", createdById: rm1.id, ...approved,
+  });
+  const dsa3 = await mk("DSA", "Rohit Gupta", "dsa3@provik.demo", {
+    companyName: "Gupta Capital Advisors", phone: "+919800000005", status: "PENDING", passwordHash: null, constitution: "Partnership", pan: "AAGFG4321M", gstin: "07AAGFG4321M1Z8",
+    address: "88 Nehru Place", city: "New Delhi", state: "Delhi", pincode: "110019", onboardingSource: "SELF",
+  });
+  for (const [partner, verified] of [[dsa1, true], [dsa2, true], [dsa3, false]] as const) {
+    for (const d of requiredPartnerDocs(partner.constitution)) {
+      const buf = tinyPdf(`${partner.companyName} - ${d.label}`);
+      await db.partnerDocument.create({
+        data: {
+          tenantId: T, userId: partner.id, type: d.type, fileName: `${d.label.replace(/[^\w]+/g, "_")}.pdf`, storedName: await saveFile(T, buf), mimeType: "application/pdf", size: buf.length,
+          uploadedById: partner.id, uploadedByName: partner.name, ...(verified ? { status: "VERIFIED", verifiedByName: admin.name, verifiedAt: ago(30) } : {}),
+        },
+      });
+    }
+  }
 
   const products = Object.fromEntries((await db.product.findMany({ where: { tenantId: T } })).map((p) => [p.code, p]));
   const lenderDefs = [["Meridian Bank", "Bank"], ["Northstar Finance", "NBFC"], ["Kaveri Capital", "NBFC"], ["Unity Small Finance Bank", "Bank"]];
@@ -63,7 +85,7 @@ export async function seedDemo(db: PrismaClient, slug = "provik") {
 
   const checklist = await db.checklistItem.findMany({ where: { tenantId: T, lenderId: null }, orderBy: { sortOrder: "asc" } });
   const pathTo = (target: string): string[] => {
-    const order = [STATUS.DRAFT, STATUS.SUBMITTED, STATUS.RM_ASSIGNED, STATUS.FEASIBLE, STATUS.DOCS_PENDING, STATUS.DOCS_COMPLETE, STATUS.PD_SCHEDULED, STATUS.PD_COMPLETED, STATUS.IPA_DONE, STATUS.SENT_TO_LENDERS, STATUS.SANCTIONED, STATUS.DISBURSED, STATUS.PAYOUT_RELEASED];
+    const order = [STATUS.DRAFT, STATUS.SUBMITTED, STATUS.RM_ASSIGNED, STATUS.DOCS_PENDING, STATUS.DOCS_COMPLETE, STATUS.FEASIBLE, STATUS.PD_SCHEDULED, STATUS.PD_COMPLETED, STATUS.IPA_DONE, STATUS.SENT_TO_LENDERS, STATUS.SANCTIONED, STATUS.DISBURSED, STATUS.PAYOUT_RELEASED];
     return order.slice(0, order.indexOf(target as never) + 1);
   };
   let n = 0;
@@ -84,6 +106,7 @@ export async function seedDemo(db: PrismaClient, slug = "provik") {
         status: o.status, statusChangedAt: ago(o.startedDaysAgo - step * (path.length - 1)), createdAt: ago(o.startedDaysAgo),
         submittedAt: path.length > 1 ? ago(o.startedDaysAgo - step) : null,
         feasibilityRemark: path.includes(STATUS.FEASIBLE) ? "Vintage 6+ yrs, healthy GST trend. Feasible." : null,
+        feasibleAt: path.includes(STATUS.FEASIBLE) ? ago(o.startedDaysAgo - step * path.indexOf(STATUS.FEASIBLE)) : null,
         ipaRemark: path.includes(STATUS.IPA_DONE) ? "DSCR 1.6x, clean banking. Approved in-principle." : null,
         disbursedAmount: o.disbursed ?? null, disbursedAt: o.disbursed ? ago(3) : null,
         disbursedLenderId: o.disbursed ? lenders.Kaveri.id : null,
@@ -95,7 +118,7 @@ export async function seedDemo(db: PrismaClient, slug = "provik") {
     await db.auditLog.createMany({
       data: path.map((s, i) => ({ tenantId: T, proposalId: p.id, actorName: i < 2 ? o.dsa.name : o.rm?.name ?? admin.name, actorRole: i < 2 ? "DSA" : "RM", action: "STATUS_CHANGED", detail: `→ ${s}`, createdAt: ago(o.startedDaysAgo - step * i) })),
     });
-    if (path.includes(STATUS.FEASIBLE)) {
+    if (path.includes(STATUS.DOCS_PENDING)) {
       const upto = o.uploaded ?? checklist.length;
       for (const [i, c] of checklist.entries()) {
         const d = await db.proposalDocument.create({
@@ -117,7 +140,7 @@ export async function seedDemo(db: PrismaClient, slug = "provik") {
 
   await proposal({ company: "Sunrise Textiles", product: "PID", dsa: dsa1, status: STATUS.DRAFT, startedDaysAgo: 0.2, amount: 7500000, constitution: "Partnership", city: "Surat" });
   await proposal({ company: "Om Agro Foods", product: "BL", dsa: dsa2, status: STATUS.SUBMITTED, startedDaysAgo: 2, amount: 2500000, constitution: "Proprietorship", city: "Indore" });
-  await proposal({ company: "Bluewave Logistics", product: "SID", dsa: dsa1, rm: rm1, status: STATUS.RM_ASSIGNED, startedDaysAgo: 0.5, amount: 12000000, constitution: "Private Limited", city: "Mumbai" });
+  await proposal({ company: "Bluewave Logistics", product: "SID", dsa: dsa1, rm: rm1, status: STATUS.DOCS_COMPLETE, startedDaysAgo: 1.5, amount: 12000000, constitution: "Private Limited", city: "Mumbai" });
   const k = await proposal({ company: "Kalpana Pharma", product: "TL", dsa: dsa1, rm: rm1, status: STATUS.DOCS_PENDING, startedDaysAgo: 3, amount: 30000000, constitution: "Private Limited", city: "Ahmedabad", uploaded: 9 });
   const gst = await db.proposalDocument.findFirst({ where: { proposalId: k.id, title: "GST Registration Certificate" } });
   await db.proposalDocument.update({ where: { id: gst!.id }, data: { status: "QUERY" } });
@@ -129,5 +152,5 @@ export async function seedDemo(db: PrismaClient, slug = "provik") {
   await proposal({ company: "Shree Ganesh Traders", product: "FACT", dsa: dsa1, rm: rm1, status: STATUS.PAYOUT_RELEASED, startedDaysAgo: 28, amount: 4000000, constitution: "Proprietorship", city: "Jaipur", lenderStates: [["Kaveri", "SANCTIONED", 4000000]], disbursed: 4000000, payout: 40000 });
 
   console.log(`\nDemo workspace "provik" ready. Password for all demo users: ${DEMO_PASSWORD}`);
-  console.log("  Admin   admin@provik.demo\n  RM      rm@provik.demo, rm2@provik.demo\n  DSA     dsa@provik.demo, dsa2@provik.demo (dsa3 is pending approval)\n  Lender  lender@meridian.demo, lender@northstar.demo, lender@kaveri.demo");
+  console.log("  Admin   admin@provik.demo\n  RM      rm@provik.demo, rm2@provik.demo\n  DSA     dsa@provik.demo (or User ID PROV-P0001), dsa2@provik.demo (dsa3 is an application awaiting approval)\n  Lender  lender@meridian.demo, lender@northstar.demo, lender@kaveri.demo");
 }

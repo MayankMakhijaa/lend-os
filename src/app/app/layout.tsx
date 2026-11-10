@@ -10,6 +10,7 @@ const NAV: Record<string, [string, string][]> = {
   ADMIN: [
     ["Dashboard", "/app"],
     ["Proposals", "/app/proposals"],
+    ["DSA / Partners", "/app/partners"],
     ["Users", "/app/users"],
     ["Lenders", "/app/lenders"],
     ["Products & checklists", "/app/products"],
@@ -20,7 +21,7 @@ const NAV: Record<string, [string, string][]> = {
   RM: [
     ["Dashboard", "/app"],
     ["My proposals", "/app/proposals"],
-    ["DSA / Partners", "/app/users"],
+    ["DSA / Partners", "/app/partners"],
   ],
   DSA: [
     ["Dashboard", "/app"],
@@ -37,6 +38,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const u = await requireUser();
   if (u.mustChangePassword && (await headers()).get("x-pathname") !== "/app/account") redirect("/app/account?must=1");
   const unread = await db.notification.count({ where: { userId: u.id, readAt: null } });
+  const pendingPartners = u.role === "ADMIN" || u.role === "RM" ? await db.user.count({ where: { tenantId: u.tenantId, role: "DSA", status: "PENDING" } }) : 0;
   const nav = [...NAV[u.role], ["Notifications", "/app/notifications"] as [string, string], ["My account", "/app/account"] as [string, string]];
   return (
     <div className="flex min-h-screen" style={{ ["--brand" as string]: u.tenant.brandColor }}>
@@ -51,6 +53,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               {label}
               {href === "/app/notifications" && unread > 0 && (
                 <span className="badge bg-red-500 text-white">{unread}</span>
+              )}
+              {href === "/app/partners" && pendingPartners > 0 && (
+                <span className="badge bg-amber-500 text-white" title="Awaiting approval">{pendingPartners}</span>
               )}
             </Link>
           ))}

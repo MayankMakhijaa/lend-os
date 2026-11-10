@@ -8,15 +8,16 @@ export const ROLE_LABEL: Record<string, string> = {
   LENDER: "Lender",
 };
 
-// Top-level proposal status, in lifecycle order.
+// Top-level proposal status, in lifecycle order. Documents are collected first (step 3); feasibility is
+// reviewed once they are in (step 4).
 export const STATUS = {
   DRAFT: "DRAFT",
   SUBMITTED: "SUBMITTED",
   RM_ASSIGNED: "RM_ASSIGNED",
-  FEASIBLE: "FEASIBLE",
-  NOT_FEASIBLE: "NOT_FEASIBLE",
   DOCS_PENDING: "DOCS_PENDING",
   DOCS_COMPLETE: "DOCS_COMPLETE",
+  FEASIBLE: "FEASIBLE",
+  NOT_FEASIBLE: "NOT_FEASIBLE",
   QUERY_RAISED: "QUERY_RAISED",
   QUERY_RESOLVED: "QUERY_RESOLVED",
   PD_SCHEDULED: "PD_SCHEDULED",
@@ -34,11 +35,11 @@ export const STATUS_ORDER: string[] = Object.values(STATUS);
 export const STATUS_LABEL: Record<string, string> = {
   DRAFT: "Draft",
   SUBMITTED: "Submitted",
-  RM_ASSIGNED: "RM Assigned · Feasibility Pending",
-  FEASIBLE: "Feasible · Checklist Shared",
-  NOT_FEASIBLE: "Not Feasible · Closed",
+  RM_ASSIGNED: "RM Assigned · Checklist Pending",
   DOCS_PENDING: "Documents Pending",
-  DOCS_COMPLETE: "Documents Complete",
+  DOCS_COMPLETE: "Documents Received · Feasibility Pending",
+  FEASIBLE: "Feasible",
+  NOT_FEASIBLE: "Not Feasible · Closed",
   QUERY_RAISED: "Query Raised",
   QUERY_RESOLVED: "Query Resolved",
   PD_SCHEDULED: "PD Call Scheduled",
@@ -53,13 +54,21 @@ export const STATUS_LABEL: Record<string, string> = {
 
 export const CLOSED_STATUSES = [STATUS.NOT_FEASIBLE, STATUS.ALL_REJECTED, STATUS.PAYOUT_RELEASED];
 
+/** Who may correct a submitted proposal: the DSA until feasibility is decided, staff until it goes to lenders. */
+export function canEditProposal(role: string, p: { status: string; feasibleAt: Date | null }) {
+  if (p.status === STATUS.DRAFT || (CLOSED_STATUSES as string[]).includes(p.status)) return false;
+  if (role === "DSA") return !p.feasibleAt;
+  const locked: string[] = [STATUS.SENT_TO_LENDERS, STATUS.SANCTIONED, STATUS.DISBURSED];
+  return (role === "RM" || role === "ADMIN") && !locked.includes(p.status);
+}
+
 // The simplified status line shown on proposal pages (from the client spec).
 export const STATUS_LINE: { label: string; statuses: string[] }[] = [
   { label: "Submitted", statuses: ["SUBMITTED"] },
   { label: "RM Assigned", statuses: ["RM_ASSIGNED"] },
-  { label: "Feasibility", statuses: ["FEASIBLE"] },
   { label: "Docs Pending", statuses: ["DOCS_PENDING"] },
-  { label: "Docs Complete", statuses: ["DOCS_COMPLETE"] },
+  { label: "Docs Received", statuses: ["DOCS_COMPLETE"] },
+  { label: "Feasibility", statuses: ["FEASIBLE"] },
   { label: "Query / PD", statuses: ["QUERY_RAISED", "QUERY_RESOLVED", "PD_SCHEDULED", "PD_COMPLETED"] },
   { label: "Approved Internally", statuses: ["IPA_DONE"] },
   { label: "Sent to Lenders", statuses: ["SENT_TO_LENDERS"] },
@@ -134,6 +143,41 @@ export function docTone(s: string): string {
   return "bg-blue-100 text-blue-700";
 }
 
+// ---- Partner (DSA) onboarding ----
+
+export const PARTNER_STATUS_LABEL: Record<string, string> = {
+  PENDING: "Pending approval",
+  ACTIVE: "Approved",
+  REJECTED: "Rejected",
+  DISABLED: "Disabled",
+};
+
+export function partnerTone(s: string): string {
+  if (s === "ACTIVE") return "bg-emerald-100 text-emerald-700";
+  if (s === "PENDING") return "bg-amber-100 text-amber-800";
+  if (s === "REJECTED") return "bg-red-100 text-red-700";
+  return "bg-slate-100 text-slate-500";
+}
+
+export const PARTNER_SOURCE_LABEL: Record<string, string> = { SELF: "Self-registered", STAFF: "Created by staff" };
+
+// KYC documents collected at partner onboarding. `onlyFor` limits a document to those constitutions.
+export const PARTNER_DOCS: { type: string; label: string; hint?: string; onlyFor?: string[] }[] = [
+  { type: "AADHAAR", label: "Aadhaar Card" },
+  { type: "PAN", label: "PAN Card" },
+  { type: "GST", label: "GST Certificate" },
+  { type: "MOA_AOA", label: "MOA and AOA", hint: "Private Limited companies only", onlyFor: ["Private Limited"] },
+  { type: "ELECTRICITY_BILL", label: "Electricity Bill", hint: "For address verification" },
+];
+
+/** The documents a partner of this constitution must provide before they can be approved. */
+export function requiredPartnerDocs(constitution?: string | null) {
+  return PARTNER_DOCS.filter((d) => !d.onlyFor || d.onlyFor.includes(constitution ?? ""));
+}
+
+export const PARTNER_DOC_ACCEPT = ".pdf,.jpg,.jpeg,.png";
+export const PARTNER_DOC_MAX_BYTES = 5 * 1024 * 1024;
+
 export const CONSTITUTIONS = ["Proprietorship", "Partnership", "LLP", "Private Limited", "Public Limited", "Other"];
 
 // ---- Defaults used to provision a new tenant ----
@@ -153,8 +197,8 @@ export const DEFAULT_PRODUCTS: { code: string; name: string }[] = [
 // TAT keys map to the status a proposal is waiting in (see src/lib/tat.ts).
 export const DEFAULT_TATS: { key: string; label: string; days: number }[] = [
   { key: "assign_rm", label: "Brief shared with RM (RM assignment)", days: 0 },
-  { key: "feasibility", label: "Feasibility check", days: 1 },
   { key: "docs_upload", label: "Documents uploaded by DSA", days: 1 },
+  { key: "feasibility", label: "Feasibility check after documents received", days: 1 },
   { key: "credit_queries", label: "Credit queries shared", days: 2 },
   { key: "query_pd", label: "Query resolution + PD call", days: 2 },
   { key: "credit_approval", label: "Credit assessment & in-principle approval", days: 1 },
