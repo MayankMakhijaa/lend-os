@@ -186,3 +186,66 @@ export function BrowserFrame({ children, className = "" }: { children: React.Rea
     </div>
   );
 }
+
+/** Cards for each stage of the borrower journey; a highlight walks through them in order while on screen. */
+export function Journey({ steps }: { steps: { t: string; d: string; tags: string[] }[] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [active, setActive] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const io = new IntersectionObserver(
+      ([e]) => {
+        if (timer) clearInterval(timer);
+        timer = undefined;
+        if (e.isIntersecting) timer = setInterval(() => setActive((n) => (n + 1) % steps.length), 1600);
+      },
+      { threshold: 0.2 },
+    );
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      if (timer) clearInterval(timer);
+    };
+  }, [steps.length]);
+  return (
+    <div ref={ref} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {steps.map((s, n) => {
+        const on = n === active;
+        const done = n < active;
+        return (
+          <div
+            key={s.t}
+            onMouseEnter={() => setActive(n)}
+            className={`relative rounded-2xl border bg-white p-6 transition-all duration-500 ${
+              on ? "-translate-y-1 border-[var(--lp-accent)] shadow-[0_20px_50px_-28px_rgba(30,64,175,0.55)]" : "border-slate-200"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span
+                className={`flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-medium transition-colors duration-500 ${
+                  on ? "bg-[var(--lp-accent)] text-white" : done ? "bg-blue-50 text-[var(--lp-accent)]" : "bg-slate-100 text-slate-400"
+                }`}
+              >
+                {String(n + 1).padStart(2, "0")}
+              </span>
+              {n < steps.length - 1 && (
+                <span className={`text-sm transition-all duration-500 ${on ? "translate-x-1 text-[var(--lp-accent)]" : "text-slate-300"}`}>→</span>
+              )}
+            </div>
+            <div className="mt-5 font-medium text-slate-900">{s.t}</div>
+            <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{s.d}</p>
+            <div className="mt-4 flex flex-wrap gap-1.5">
+              {s.tags.map((x) => (
+                <span key={x} className="rounded-full border border-slate-200 px-2 py-0.5 text-[11px] text-slate-500">
+                  {x}
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

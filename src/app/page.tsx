@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { BrowserFrame, Pipeline, Reveal, RotatingWord, ScreenTabs } from "@/components/landing/Motion";
+import { BrowserFrame, Journey, Pipeline, Reveal, RotatingWord, ScreenTabs } from "@/components/landing/Motion";
 
 const WHATSAPP = "https://wa.me/919873742314?text=Hello%2C%20This%20is%20an%20enquiry%20regarding%20LOS";
 
@@ -27,6 +27,24 @@ const FEATURES = [
   { t: "Role-based workspaces", d: "Purpose-built views for admins, relationship managers, DSA partners and lenders." },
   { t: "Partner onboarding & KYC", d: "Invite DSAs, collect KYC and review partners before they can file a single case." },
   { t: "Reports & audit trail", d: "Conversion funnels, RM and lender performance, CSV exports and a log of every action." },
+];
+
+const JOURNEY = [
+  { t: "KYC onboarding", d: "Digital KYC for borrowers, directors and partners, verified before a file moves.", tags: ["Aadhaar", "PAN", "CKYC", "Video KYC"] },
+  { t: "Credit bureau pull", d: "Pull consumer and commercial bureau reports in one click and keep them on the file.", tags: ["CIBIL", "Experian", "Equifax", "CRIF"] },
+  { t: "Account Aggregator", d: "Consent-based bank statements straight from the borrower's bank. No PDFs to chase.", tags: ["AA consent", "Bank statements", "Perfios"] },
+  { t: "GST & ITR analysis", d: "Turnover, filings and financials read automatically to back the credit view.", tags: ["GSTR", "ITR", "Financials"] },
+  { t: "Credit decisioning", d: "Policy rules, scorecards and deviations applied the same way on every case.", tags: ["BRE", "Scorecards", "Deviations"] },
+  { t: "Sanction & e-sign", d: "Sanction letters and loan agreements signed and stamped online.", tags: ["Sanction letter", "eSign", "eStamp"] },
+  { t: "Repayment mandate", d: "Set up the repayment mandate before funds go out, so the first EMI never bounces.", tags: ["eNACH", "UPI AutoPay"] },
+  { t: "Disbursement", d: "Release funds, notify every party and hand the loan to LMS for servicing.", tags: ["Disbursal", "LMS handoff", "Payouts"] },
+];
+
+const TRUST = [
+  { t: "Isolated workspaces", d: "Each lender or partner runs in its own tenant. Data never crosses workspaces." },
+  { t: "Encrypted at rest", d: "Every document is AES-256 encrypted, with versions kept, never overwritten." },
+  { t: "Role-based access", d: "Admins, RMs, partners and lenders only see what their role allows." },
+  { t: "Complete audit trail", d: "Every status change, upload, query and login is logged with who and when." },
 ];
 
 const AUDIENCE = [
@@ -67,6 +85,13 @@ export default async function Home() {
 
   return (
     <div className="lp min-h-screen overflow-x-hidden text-slate-700">
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+      <link
+        rel="stylesheet"
+        precedence="default"
+        href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..700;1,400..700&family=Raleway:wght@400..700&display=swap"
+      />
       {/* Nav */}
       <header className="sticky top-0 z-40 border-b border-slate-100/80 bg-white/75 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
@@ -78,6 +103,7 @@ export default async function Home() {
             <a href="#products" className="hover:text-slate-900">Products</a>
             <a href="#how" className="hover:text-slate-900">How it works</a>
             <a href="#features" className="hover:text-slate-900">Features</a>
+            <a href="#journey" className="hover:text-slate-900">KYC to disbursal</a>
             <a href="#who" className="hover:text-slate-900">Who it&apos;s for</a>
           </nav>
           <div className="flex items-center gap-2">
@@ -236,6 +262,26 @@ export default async function Home() {
         </div>
       </section>
 
+      {/* Journey */}
+      <section id="journey" className="scroll-mt-20 border-t border-slate-100">
+        <div className="mx-auto max-w-6xl px-4 py-24 sm:px-6 sm:py-32">
+          <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
+            <Reveal className="max-w-2xl">
+              <Eyebrow>From KYC to disbursement</Eyebrow>
+              <h2 className="mt-4 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
+                Every check a loan needs, <span className="lp-serif italic text-slate-500">already connected.</span>
+              </h2>
+            </Reveal>
+            <Reveal delay={100} className="max-w-sm text-slate-500">
+              KYC, bureau, bank data and e-sign run inside the same record, so your credit team decides on one screen instead of six portals.
+            </Reveal>
+          </div>
+          <Reveal delay={150} className="mt-14">
+            <Journey steps={JOURNEY} />
+          </Reveal>
+        </div>
+      </section>
+
       {/* Screens */}
       <section className="border-y border-slate-100 bg-slate-50/60">
         <div className="mx-auto max-w-6xl px-4 py-24 sm:px-6 sm:py-28">
@@ -246,6 +292,23 @@ export default async function Home() {
           <Reveal delay={100} className="mx-auto mt-10 max-w-5xl">
             <ScreenTabs tabs={SCREENS} />
           </Reveal>
+        </div>
+      </section>
+
+      {/* Trust */}
+      <section className="mx-auto max-w-6xl px-4 pt-24 sm:px-6 sm:pt-32">
+        <Reveal className="max-w-2xl">
+          <Eyebrow>Security & control</Eyebrow>
+          <h2 className="mt-4 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">Built for regulated lending.</h2>
+        </Reveal>
+        <div className="mt-12 grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
+          {TRUST.map((x, i) => (
+            <Reveal key={x.t} delay={i * 90}>
+              <div className="h-px w-10 bg-[var(--lp-accent)]" />
+              <div className="mt-5 font-medium text-slate-900">{x.t}</div>
+              <p className="mt-2 text-sm leading-relaxed text-slate-500">{x.d}</p>
+            </Reveal>
+          ))}
         </div>
       </section>
 

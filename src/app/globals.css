@@ -25,8 +25,10 @@ body { @apply bg-slate-50 text-slate-800 antialiased; }
 }
 
 /* ---------- Landing page ---------- */
-.lp { --lp-accent: #1e40af; --lp-ink: #0f172a; background: #fff; }
-.lp-serif { font-family: ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, serif; font-weight: 400; }
+.lp { --lp-accent: #1e40af; --lp-ink: #0f172a; background: #fff; font-family: "Raleway", ui-sans-serif, system-ui, sans-serif; font-feature-settings: "lnum" 1; }
+.lp h1, .lp h2, .lp-serif { font-family: "Playfair Display", ui-serif, Georgia, serif; }
+.lp h1, .lp h2 { font-weight: 500; letter-spacing: -0.01em; }
+.lp-serif { font-weight: 400; }
 .lp-reveal { opacity: 0; transform: translateY(18px); transition: opacity .8s cubic-bezier(.2,.7,.2,1), transform .8s cubic-bezier(.2,.7,.2,1); }
 .lp-reveal.lp-in { opacity: 1; transform: none; }
 .lp-grid-bg {
